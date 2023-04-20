@@ -1,14 +1,18 @@
 from fastapi import Depends, FastAPI, Body, HTTPException, Path, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse
-import movies #listado de las películas
 from pydantic import BaseModel, Field
 from typing import Optional
 from jwt_manager import create_token, validate_token
 from fastapi.security import HTTPBearer
+from config.database import Session, engine, Base
+from models.movie import Movie as MovieModel
+from fastapi.encoders import jsonable_encoder
 
 app = FastAPI()
 app.title = 'Movie App'
-app.version = '0.0.1'
+app.version = '0.0.2'
+
+Base.metadata.create_all(bind = engine)
 
 class JWTBearer(HTTPBearer):
     async def __call__(self, request: Request):
@@ -22,7 +26,6 @@ class User(BaseModel):
     password: str
     
 class Movie(BaseModel):
-    id: Optional[int] = None
     title: str
     overview: str
     year: int
@@ -31,7 +34,6 @@ class Movie(BaseModel):
     class Config:
         schema_extra = {
             'example': {
-                'id': 0,
                 'title': 'My title',
                 'overview': 'Description',
                 'year': 2023,
@@ -54,50 +56,71 @@ def login(user: User):
         return JSONResponse(status_code=200, content= {'message': 'Usuario invalido'})
 
 # Obtener lista de películas
-@app.get('/movies', tags=['movies'], status_code= 200, dependencies=[Depends(JWTBearer)])
+@app.get('/movies', tags=['movies'], status_code= 200)
 def get_movies():
-    return JSONResponse(status_code= 200, content= movies.list_of_movies)
+    db = Session()
+    results = db.query(MovieModel).all()
+    return JSONResponse(status_code= 200, content= jsonable_encoder(results))
 
 # Obtener lista de películas por ID
 @app.get('/movies/{id}', tags=['movies'], status_code= 200)
 def get_movie(id: int):
-    for item in movies.list_of_movies:
-        if item['id'] == id:
-            return JSONResponse(content= item)
-        else: 
-           return JSONResponse(status_code= 404, content= {'Messega' : 'ERROR: Recurso no encontrado'})
+    db = Session()
+    result = db.query(MovieModel).filter(MovieModel.id == id).first()
+    
+    if not result:
+        return JSONResponse(status_code= 404, content= {'Messega' : 'ERROR: Recurso no encontrado'})
+ 
+    return JSONResponse(status_code= 200, content= jsonable_encoder(result))
 
 # Obtener lista de películas por CATEGORÍA
 @app.get('/movies/', tags=['movies'], status_code= 200)
 def get_movies_by_category(category: str):
-    movies_by_category = [item for item in movies.list_of_movies if item['category'] == category] 
-            
-    return JSONResponse(status_code= 200, content= movies_by_category)
+    db = Session()
+    result = db.query(MovieModel).filter(MovieModel.category == category).all()
+    
+    if not result:
+        return JSONResponse(status_code= 404, content= {'Messega' : 'ERROR: Recurso no encontrado'})
+
+    return JSONResponse(status_code= 200, content= jsonable_encoder(result))
 
 # Crea una películas
 @app.post('/movies', tags=['movies'], status_code= 201)
-def create_movie(movie: Movie):
-    movies.list_of_movies.append(movie)
+def create_movie(movie: Movie) -> dict:
+    db = Session()
+    new_movie = MovieModel(**movie.dict())
+    db.add(new_movie)
+    db.commit()
     return JSONResponse(status_code= 201, content= {'message': 'Su película ha sido creada'})
 
 # Modificación de películas por ID
 @app.put('/movies/{id}', tags=['movies'])
 def edit_movie(id: int, movie: Movie):
-    for item in movies.list_of_movies:
-        if item['id'] == id:
-            item['title'] = movie.title
-            item['overview'] = movie.overview
-            item['year'] = movie.year
-            item['rating'] = movie.rating
-            item['category'] = movie.category
+    db = Session()
+    result = db.query(MovieModel).filter(MovieModel.id == id).first()
+    
+    if not result:
+        return JSONResponse(status_code= 404, content= {'Messega' : 'ERROR: Recurso no encontrado'})
+
+    result.title = movie.title
+    result.overview = movie.overview
+    result.year = movie.year
+    result.rating = movie.rating
+    result.category = movie.category
+    db.commit()
             
-            return JSONResponse(content= {'message': 'Su película ha sido modificada'})
+    return JSONResponse(content= {'message': 'Su película ha sido modificada'})
         
 # Eliminación de película por ID
 @app.delete('/movies/{id}', tags=['movies'])
 def delete_movie(id: int):
-    for item in movies.list_of_movies:
-        if item['id'] == id:
-            movies.list_of_movies.remove(item)            
-            
-            return JSONResponse(content= {'message': 'Su película ha sido Eliminada'})
+    db = Session()
+    result = db.query(MovieModel).filter(MovieModel.id == id).first()
+    
+    if not result:
+        return JSONResponse(status_code= 404, content= {'Messega' : 'ERROR: Recurso no encontrado'})
+    
+    db.delete(result)
+    db.commit()
+
+    return JSONResponse(content= {'message': 'Su película ha sido Eliminada'})
